@@ -769,7 +769,7 @@ function frame(now) {
     $('st-inliers').textContent = slam.lastInliers + ' (' + (slam.lastInlierRatio*100).toFixed(0) + '%)';
     $('st-landmarks').textContent = slam.landmarks.size;
     $('st-kfs').textContent = slam.kfCount;
-    $('st-dist').textContent = slam.distance.toFixed(2) + (mode === 'synth' ? ' m*' : ' u');
+    $('st-dist').textContent = slam.distance.toFixed(2) + ' map units';
     $('st-pos').textContent = slam.C.map(v => v.toFixed(2)).join(', ');
     $('st-scale').textContent = slam.lastScale.toFixed(3);
     if (mode === 'synth' && alignError !== null) {
