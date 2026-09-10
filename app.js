@@ -432,7 +432,6 @@ class SynthFactory {
         if ((p.x - x) * (p.x - x) + (p.z - z) * (p.z - z) < r * r) return false;
       return true;
     };
-  }
 
     // pillars
     const hazardTex = makeHazardTexture();
@@ -486,6 +485,7 @@ class SynthFactory {
       if (side === 3) { bb.position.set(-29.5, 3.4, -off); bb.rotation.y = Math.PI/2; }
       this.scene.add(bb);
     });
+  }
 
   step(dt) {
     this.t = (this.t + dt * this.speed / this.pathLen) % 1;
