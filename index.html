@@ -34,7 +34,9 @@
   #map-panel{grid-row:1/2}
   #log-panel{grid-column:1/4;grid-row:2/3;padding:8px 12px;font:11px/1.5 var(--mono);color:var(--dim);overflow-y:auto}
   .panel-title{position:absolute;top:8px;left:10px;font:10px var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.14em;z-index:5;pointer-events:none}
-  #feed-canvas,#overlay-canvas{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;background:#000}
+  #feed-canvas,#overlay-canvas{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}
+  #feed-canvas{background:#000}
+  #overlay-canvas{background:transparent}
   #map-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   .stat{margin-bottom:11px}
   .stat .k{font:9px var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.12em}
@@ -103,13 +105,13 @@
   <span>Independent reimplementation inspired by the <a href="https://x.com/notgiannei/status/2098079466740212097">microSLAM announcement</a> (@notgiannei / microagi.ai). Not affiliated.</span>
 </footer>
 <script async id="opencv-loader"></script>
-<script src="geometry.js?v=2"></script>
+<script src="geometry.js?v=3"></script>
 <script type="importmap">
 { "imports": {
     "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
     "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
 } }
 </script>
-<script type="module" src="app.js?v=2"></script>
+<script type="module" src="app.js?v=3"></script>
 </body>
 </html>
