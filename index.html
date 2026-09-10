@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>microSLAM - monocular SLAM in the browser</title>
+<meta name="description" content="A real monocular visual SLAM system running entirely in your browser: feature tracking, essential-matrix pose estimation, triangulation, and a live sparse 3D map from one RGB stream.">
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#101318; --panel2:#14181f; --line:#232830;
+    --text:#e8eaee; --dim:#8a919c; --faint:#5a626d;
+    --green:#46e08a; --red:#ff5566; --cyan:#5ad1ff; --amber:#ffc454;
+    --mono:ui-monospace,'SF Mono','Cascadia Code',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:'Helvetica Neue',Inter,Arial,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:18px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+  .wordmark{font-size:22px;font-weight:700;letter-spacing:-0.02em}
+  .wordmark em{font-style:normal;color:var(--green)}
+  .tag{font-size:12px;color:var(--dim);max-width:340px;line-height:1.35}
+  .spacer{flex:1}
+  .src-group{display:flex;gap:8px;align-items:center}
+  .lbl{font:10px var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.12em}
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;
+    padding:7px 13px;font:12px var(--mono);letter-spacing:.04em;cursor:pointer;text-transform:uppercase}
+  button:hover{border-color:var(--green);color:var(--green)}
+  button.active{border-color:var(--green);color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
+  button:disabled{opacity:.4;cursor:default}
+  main{flex:1;display:grid;grid-template-columns:250px 1fr 1fr;grid-template-rows:1fr 120px;gap:1px;background:var(--line);min-height:0}
+  .panel{background:var(--panel);position:relative;min-height:0;min-width:0;overflow:hidden}
+  #stats-panel{grid-row:1/2;padding:12px}
+  #feed-panel{grid-row:1/2}
+  #map-panel{grid-row:1/2}
+  #log-panel{grid-column:1/4;grid-row:2/3;padding:8px 12px;font:11px/1.5 var(--mono);color:var(--dim);overflow-y:auto}
+  .panel-title{position:absolute;top:8px;left:10px;font:10px var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.14em;z-index:5;pointer-events:none}
+  #feed-canvas,#overlay-canvas{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;background:#000}
+  #map-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+  .stat{margin-bottom:11px}
+  .stat .k{font:9px var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.12em}
+  .stat .v{font:17px var(--mono);color:var(--text);margin-top:2px}
+  .stat .v.g{color:var(--green)} .stat .v.a{color:var(--amber)} .stat .v.c{color:var(--cyan)}
+  #state-chip{display:inline-block;font:10px var(--mono);padding:3px 8px;border-radius:4px;background:#1a2a20;color:var(--green);border:1px solid #24503a;letter-spacing:.1em}
+  #state-chip.warn{background:#2a2416;color:var(--amber);border-color:#54451e}
+  #state-chip.err{background:#2a1618;color:var(--red);border-color:#542126}
+  .log-ok{color:var(--dim)} .log-hi{color:var(--green)} .log-warn{color:var(--amber)}
+  #cv-status{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:rgba(11,13,16,.92);z-index:20}
+  #cv-status .bar{width:220px;height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+  #cv-status .bar i{display:block;height:100%;width:40%;background:var(--green);border-radius:2px;animation:slide 1.1s ease-in-out infinite alternate}
+  @keyframes slide{from{transform:translateX(-60%)}to{transform:translateX(220px)}}
+  #cv-status p{font:11px var(--mono);color:var(--dim)}
+  footer{flex:none;padding:7px 16px;border-top:1px solid var(--line);background:var(--panel);
+    font:10px var(--mono);color:var(--faint);display:flex;gap:24px}
+  footer a{color:var(--dim);text-decoration:none;border-bottom:1px dotted var(--faint)}
+  footer a:hover{color:var(--green)}
+  #rec-dot{display:none;color:var(--red)}
+  #file-input{display:none}
+</style>
+</head>
+<body>
+<header>
+  <div class="wordmark">micro<em>SLAM</em></div>
+  <div class="tag">Monocular visual SLAM, live in your browser. One RGB stream in - sparse geometry, camera trajectory and a growing 3D map out.</div>
+  <div class="spacer"></div>
+  <div class="src-group">
+    <span class="lbl">source</span>
+    <button id="btn-synth" class="active">Synthetic factory</button>
+    <button id="btn-webcam">Webcam</button>
+    <button id="btn-video">Video file</button>
+    <input id="file-input" type="file" accept="video/*">
+  </div>
+  <button id="btn-pause">Pause</button>
+  <button id="btn-reset">Reset map</button>
+</header>
+<main>
+  <section class="panel" id="stats-panel">
+    <div class="stat"><span class="k">state</span><div class="v"><span id="state-chip">BOOT</span></div></div>
+    <div class="stat"><span class="k">pipeline fps</span><div class="v" id="st-fps">-</div></div>
+    <div class="stat"><span class="k">tracked features</span><div class="v c" id="st-tracks">0</div></div>
+    <div class="stat"><span class="k">pose inliers</span><div class="v" id="st-inliers">-</div></div>
+    <div class="stat"><span class="k">map landmarks</span><div class="v g" id="st-landmarks">0</div></div>
+    <div class="stat"><span class="k">keyframes</span><div class="v" id="st-kfs">0</div></div>
+    <div class="stat"><span class="k">distance travelled</span><div class="v" id="st-dist">0.00 m</div></div>
+    <div class="stat" id="stat-ate" style="display:none"><span class="k">trajectory error vs ground truth</span><div class="v a" id="st-ate">-</div></div>
+    <div class="stat"><span class="k">position (map frame)</span><div class="v" id="st-pos" style="font-size:12px">-</div></div>
+    <div class="stat"><span class="k">motion scale</span><div class="v" id="st-scale">-</div></div>
+  </section>
+  <section class="panel" id="feed-panel">
+    <div class="panel-title">camera feed + tracks</div>
+    <canvas id="feed-canvas" width="640" height="360"></canvas>
+    <canvas id="overlay-canvas" width="640" height="360"></canvas>
+    <div id="cv-status"><div class="bar"><i></i></div><p id="cv-status-text">loading opencv.js (~8 MB wasm)...</p></div>
+  </section>
+  <section class="panel" id="map-panel">
+    <div class="panel-title">sparse map - drag to orbit, scroll to zoom</div>
+    <canvas id="map-canvas"></canvas>
+  </section>
+  <section class="panel" id="log-panel"><div id="log"></div></section>
+</main>
+<footer>
+  <span>GFTT corners &rarr; KLT optical flow &rarr; 5-point essential matrix (RANSAC) &rarr; pose recovery &rarr; scale propagation &rarr; triangulation</span>
+  <span class="spacer" style="flex:1"></span>
+  <span>Independent reimplementation inspired by the <a href="https://x.com/notgiannei/status/2098079466740212097">microSLAM announcement</a> (@notgiannei / microagi.ai). Not affiliated.</span>
+</footer>
+<script async id="opencv-loader"></script>
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
