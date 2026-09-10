@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const W = 640, H = 360;
-const MAX_CORNERS = 700, MIN_TRACKS = 120, TOPUP = 450;
+const MAX_CORNERS = 500, MIN_TRACKS = 110, TOPUP = 320;
 const KF_PARALLAX_PX = 28, KF_MAX_AGE = 40, MIN_PARALLAX = 1.6, NEWLM_PARALLAX = 2.6;
 const MAX_LANDMARKS = 80000;
 
@@ -43,14 +43,13 @@ const I3 = [1,0,0, 0,1,0, 0,0,1];
 const cv2three = p => [p[0], -p[1], -p[2]];
 const three2cv = p => [p[0], -p[1], -p[2]];
 
-function matFromCvR(R) { // cv.Mat CV_64F 3x3 -> array9
-  return Array.from(R.data64F);
-}
 function buildK(f) { return [f,0,W/2, 0,f,H/2, 0,0,1]; }
 
 // ---------- OpenCV loader ----------
 function loadOpenCV() {
   return new Promise((resolve, reject) => {
+    // NB: only detection + KLT are used from OpenCV (this build omits calib3d
+    // pose functions, which is why geometry.js implements them from scratch).
     const urls = [
       'https://docs.opencv.org/4.x/opencv.js',
       'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js'
@@ -70,11 +69,10 @@ function loadOpenCV() {
 // ---------- SLAM engine ----------
 class MonoSLAM {
   constructor(K) {
-    this.K = K; this.Kmat = null; // cv mat, built lazily when cv ready
+    this.K = K;
     this.reset();
   }
   reset() {
-    if (this.Kmat) { this.Kmat.delete(); this.Kmat = null; }
     this.tracks = [];            // {id, x, y, kx, ky, age, lm}
     this.nextTrackId = 1;
     this.landmarks = new Map();  // id -> {p:[x,y,z], c:[r,g,b]}
@@ -182,85 +180,50 @@ class MonoSLAM {
       }
 
       // --- essential matrix between keyframe and current ---
-      const kfA = new Float64Array(2*m), curA = new Float64Array(2*m);
       let medFlow = 0; const flows = [];
-      this.tracks.forEach((t, i) => {
-        kfA[2*i] = t.kx; kfA[2*i+1] = t.ky;
-        curA[2*i] = t.x; curA[2*i+1] = t.y;
-        flows.push(Math.hypot(t.x - t.kx, t.y - t.ky));
-      });
+      this.tracks.forEach(t => flows.push(Math.hypot(t.x - t.kx, t.y - t.ky)));
       flows.sort((a,b) => a-b); medFlow = flows[m >> 1];
 
-      const kfPts = cv.matFromArray(m, 1, cv.CV_64FC2, Array.from(kfA));
-      const curPts = cv.matFromArray(m, 1, cv.CV_64FC2, Array.from(curA));
-      garbage.push(kfPts, curPts);
-      if (!this.Kmat) { this.Kmat = cv.matFromArray(3, 3, cv.CV_64FC1, this.K); }
-      const mask = new cv.Mat(); garbage.push(mask);
-      const E = cv.findEssentialMat(kfPts, curPts, this.Kmat, cv.RANSAC, 0.999, 1.0, mask);
-      garbage.push(E);
-      if (E.empty() || E.rows !== 3) { this.state = 'TRACKING'; return info; }
-      const Rm = new cv.Mat(), tm = new cv.Mat();
-      garbage.push(Rm, tm);
-      const good = cv.recoverPose(E, kfPts, curPts, this.Kmat, Rm, tm, mask);
-      const Rrel = matFromCvR(Rm);
-      const trel = Array.from(tm.data64F);
-
-      const maskData = mask.data;
+      const pose = SLAMGEO.estimatePose(
+        this.tracks.map(t => [t.kx, t.ky]),
+        this.tracks.map(t => [t.x, t.y]),
+        this.K);
+      if (!pose) { this.state = 'TRACKING'; return info; }
+      const Rrel = pose.R, trel = pose.t;
+      const maskData = pose.mask;
       const inlIdx = [];
       for (let i = 0; i < m; i++) if (maskData[i]) inlIdx.push(i);
-      this.lastInliers = good;
-      this.lastInlierRatio = good / m;
+      this.lastInliers = pose.inliers;
+      this.lastInlierRatio = pose.inliers / m;
       info.inliers = inlIdx.map(i => this.tracks[i]);
       info.outliers = this.tracks.filter((t, i) => !maskData[i]);
 
       // reject degenerate updates
-      if (good < 25 || this.lastInlierRatio < 0.35 || medFlow < 0.35) {
+      if (pose.inliers < 25 || this.lastInlierRatio < 0.35 || medFlow < 0.35) {
         this.state = 'TRACKING';
         return info;
       }
 
       // --- triangulate inlier tracks (keyframe frame) ---
       const R = Rrel, Rt = tr3(Rrel);
-      // P1 = K[I|0], P2 = K[R|t]
-      const K = this.K;
-      const M2 = [R[0],R[1],R[2],trel[0], R[3],R[4],R[5],trel[1], R[6],R[7],R[8],trel[2]];
-      const P1 = [K[0],K[1],K[2],0, K[3],K[4],K[5],0, K[6],K[7],K[8],0];
-      const P2 = new Array(12);
-      for (let i = 0; i < 3; i++) for (let j = 0; j < 4; j++)
-        P2[i*4+j] = K[i*3]*M2[j] + K[i*3+1]*M2[4+j] + K[i*3+2]*M2[8+j];
-
       const triIdx = inlIdx.filter(i => {
         const t = this.tracks[i];
         const par = Math.hypot(t.x - t.kx, t.y - t.ky);
         return par > MIN_PARALLAX;
       });
 
-      let Xkf = null; // Float64Array 3 per triIdx entry (unscaled)
+      let Xkf = null; // Float64Array 3 per triIdx entry (unscaled, keyframe frame)
       if (triIdx.length >= 6) {
         const N = triIdx.length;
-        const xs1 = [], ys1 = [], xs2 = [], ys2 = [];
-        for (const i of triIdx) {
-          const t = this.tracks[i];
-          xs1.push(t.kx); ys1.push(t.ky); xs2.push(t.x); ys2.push(t.y);
-        }
-        const P1m = cv.matFromArray(3, 4, cv.CV_64FC1, P1);
-        const P2m = cv.matFromArray(3, 4, cv.CV_64FC1, P2);
-        const q1 = cv.matFromArray(2, N, cv.CV_64FC1, xs1.concat(ys1));
-        const q2 = cv.matFromArray(2, N, cv.CV_64FC1, xs2.concat(ys2));
-        const p4 = new cv.Mat();
-        garbage.push(P1m, P2m, q1, q2, p4);
-        cv.triangulatePoints(P1m, P2m, q1, q2, p4);
-        const h = p4.data64F;
         Xkf = new Float64Array(3*N);
         let valid = 0;
         for (let i = 0; i < N; i++) {
-          const w = h[4*i+3];
-          if (Math.abs(w) < 1e-9) continue;
-          const x = h[4*i]/w, y = h[4*i+1]/w, z = h[4*i+2]/w;
-          // cheirality: in front of both keyframe and current camera
-          const z2 = R[6]*x + R[7]*y + R[8]*z + trel[2];
-          if (z > 0.02 && z2 > 0.02 && z < 200) {
-            Xkf[3*i] = x; Xkf[3*i+1] = y; Xkf[3*i+2] = z; valid++;
+          const t = this.tracks[triIdx[i]];
+          const X = SLAMGEO.triangulatePx([t.kx, t.ky], [t.x, t.y], this.K, R, trel);
+          if (!X) continue;
+          const z2 = R[6]*X[0] + R[7]*X[1] + R[8]*X[2] + trel[2];
+          if (X[2] > 0.02 && z2 > 0.02 && X[2] < 200) {
+            Xkf[3*i] = X[0]; Xkf[3*i+1] = X[1]; Xkf[3*i+2] = X[2]; valid++;
           }
         }
         if (valid < 6) Xkf = null;
@@ -507,7 +470,7 @@ class SynthFactory {
     ].map(([x,z]) => new THREE.Vector3(x, 1.7, z));
     this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.6);
     this.pathLen = this.curve.getLength();
-    this.speed = 2.4; // m/s
+    this.speed = 1.0; // m/s
   }
 
   step(dt) {
