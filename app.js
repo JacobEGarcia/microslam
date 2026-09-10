@@ -416,6 +416,24 @@ class SynthFactory {
       this.scene.add(strip);
     }
 
+    // closed patrol path
+    const pts = [
+      [-20,-10], [-8,-15], [6,-14], [16,-16], [22,-8], [20,4],
+      [22,14], [10,16], [0,12], [-12,16], [-22,10], [-16,0]
+    ].map(([x,z]) => new THREE.Vector3(x, 1.7, z));
+    this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.6);
+    this.pathLen = this.curve.getLength();
+    this.speed = 1.0; // m/s
+    // sample path for obstacle clearance
+    this.pathSamples = [];
+    for (let i = 0; i < 300; i++) this.pathSamples.push(this.curve.getPointAt(i / 300));
+    this.clearOfPath = (x, z, r) => {
+      for (const p of this.pathSamples)
+        if ((p.x - x) * (p.x - x) + (p.z - z) * (p.z - z) < r * r) return false;
+      return true;
+    };
+  }
+
     // pillars
     const hazardTex = makeHazardTexture();
     for (let gx = -2; gx <= 2; gx++) for (let gz = -2; gz <= 2; gz++) {
@@ -423,7 +441,9 @@ class SynthFactory {
       const p = new THREE.Mesh(
         new THREE.CylinderGeometry(0.35, 0.4, 7, 14),
         new THREE.MeshLambertMaterial({ map: hazardTex }));
-      p.position.set(gx*9 + (Math.random()-0.5), 3.5, gz*9 + (Math.random()-0.5));
+      let px = gx*9 + (Math.random()-0.5), pz = gz*9 + (Math.random()-0.5);
+      if (!this.clearOfPath(px, pz, 2.5)) { pz += 3.0; if (!this.clearOfPath(px, pz, 2.5)) continue; }
+      p.position.set(px, 3.5, pz);
       this.scene.add(p);
     }
 
@@ -434,8 +454,12 @@ class SynthFactory {
       const w = 0.8 + Math.random()*1.4, h = 0.7 + Math.random()*1.5, d = 0.8 + Math.random()*1.4;
       const tex = makeCrateTexture('C-' + String(cid++).padStart(2,'0'), palette[i % palette.length]);
       const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ map: tex }));
-      const ang = Math.random()*Math.PI*2, r = 5 + Math.random()*22;
-      b.position.set(Math.cos(ang)*r, h/2, Math.sin(ang)*r);
+      let bx = 0, bz = 0, tries = 0;
+      do {
+        const ang = Math.random()*Math.PI*2, r = 5 + Math.random()*22;
+        bx = Math.cos(ang)*r; bz = Math.sin(ang)*r;
+      } while (!this.clearOfPath(bx, bz, 4.2) && ++tries < 40);
+      b.position.set(bx, h/2, bz);
       b.rotation.y = Math.random()*Math.PI;
       this.scene.add(b);
       if (Math.random() < 0.35) { // stacked crate
@@ -462,16 +486,6 @@ class SynthFactory {
       if (side === 3) { bb.position.set(-29.5, 3.4, -off); bb.rotation.y = Math.PI/2; }
       this.scene.add(bb);
     });
-
-    // closed patrol path
-    const pts = [
-      [-20,-10], [-8,-15], [6,-14], [16,-16], [22,-8], [20,4],
-      [22,14], [10,16], [0,12], [-12,16], [-22,10], [-16,0]
-    ].map(([x,z]) => new THREE.Vector3(x, 1.7, z));
-    this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.6);
-    this.pathLen = this.curve.getLength();
-    this.speed = 1.0; // m/s
-  }
 
   step(dt) {
     this.t = (this.t + dt * this.speed / this.pathLen) % 1;
