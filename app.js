@@ -521,7 +521,8 @@ class SynthFactory {
 // ---------- 3D map view ----------
 class MapView {
   constructor(canvas) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0b0d10);
     this.cam = new THREE.PerspectiveCamera(60, 1, 0.05, 500);
@@ -710,6 +711,11 @@ function drawOverlay(info) {
 
 function frame(now) {
   requestAnimationFrame(frame);
+  if (document.hidden) return;
+  // Cap the CV pipeline on high-refresh displays. Tracking quality holds while
+  // battery and thermals improve substantially on laptops and phones.
+  if (frame._lastRun && now - frame._lastRun < 30) return;
+  frame._lastRun = now;
   const dt = Math.min(0.1, (now - lastT) / 1000) || 0.016;
   lastT = now;
   if (!cvReady || !running || !slam) return;
@@ -854,6 +860,12 @@ $('btn-reset').onclick = () => {
 
 // map view click toggles follow
 $('map-canvas').addEventListener('pointerdown', () => { if (mapView) mapView.follow = false; });
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { lastT = performance.now(); frame._p = lastT; }
+});
+window.addEventListener('pagehide', stopVideo);
+window.matchMedia('(max-width: 700px)').addEventListener('change', () => mapView && mapView.resize());
 
 // ---------- boot ----------
 (async () => {
